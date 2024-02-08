@@ -2,6 +2,7 @@ import { z } from "zod"
 import { randomUUID } from "node:crypto"
 import { prisma } from "../../lib/prisma"
 import { FastifyInstance } from "fastify"
+import { redis } from "../../lib/redis"
 
 export async function voteOnPoll(app: FastifyInstance) {
     app.post("/polls/:pollId/votes", async (request, reply)=>{
@@ -26,7 +27,7 @@ export async function voteOnPoll(app: FastifyInstance) {
        const { pollId } = voteOnPollParams.parse(request.params)
 
         //created logic to vote on pollOptions
-        const {sessionId} = sessionParams.parse(request.cookies)
+        const { sessionId } = sessionParams.parse(request.cookies)
 
         //verified if the user had a vote
         if(sessionId) {
@@ -46,6 +47,10 @@ export async function voteOnPoll(app: FastifyInstance) {
                         id: userpreviusVoteOnPoll.id
                     }
                 })
+                
+                //decremente the rank of votes, if the user want to change their pollOption
+                await redis.zincrby(pollId, -1, userpreviusVoteOnPoll.pollOptionId)
+
             } else if(userpreviusVoteOnPoll){
                 return reply.status(400).send({message: "You already vote on this poll."})
             }
@@ -69,6 +74,9 @@ export async function voteOnPoll(app: FastifyInstance) {
                 pollOptionId
            }
        })
+
+       //created rank of votes for all pollOptions 
+       await redis.zincrby(pollId, 1, pollOptionId)
 
         return reply.status(201).send()
     })
