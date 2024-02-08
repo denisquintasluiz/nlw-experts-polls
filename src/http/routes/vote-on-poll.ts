@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { prisma } from "../../lib/prisma"
 import { FastifyInstance } from "fastify"
 import { redis } from "../../lib/redis"
+import { voting } from "../../utils/voting-pub-sub"
 
 export async function voteOnPoll(app: FastifyInstance) {
     app.post("/polls/:pollId/votes", async (request, reply)=>{
@@ -41,16 +42,26 @@ export async function voteOnPoll(app: FastifyInstance) {
             })
             //verify if the user want tho make vote at another poll option
             if(userpreviusVoteOnPoll && userpreviusVoteOnPoll.pollOptionId != pollOptionId){
-                //if the condiction satisfy, delete the poll option previous
-                await prisma.vote.delete({
-                    where: {
-                        id: userpreviusVoteOnPoll.id
-                    }
-                })
-                
-                //decremente the rank of votes, if the user want to change their pollOption
-                await redis.zincrby(pollId, -1, userpreviusVoteOnPoll.pollOptionId)
+              //if the condiction satisfy, delete the poll option previous
+              await prisma.vote.delete({
+                where: {
+                  id: userpreviusVoteOnPoll.id,
+                },
+              });
 
+              //decremente the rank of votes, if the user want to change their pollOption
+             const votes = await redis.zincrby(
+                pollId,
+                -1,
+                userpreviusVoteOnPoll.pollOptionId
+              );
+
+              //published message when the user vote on an pull or change thier twoice
+              voting.publish(pollId, {
+                pollOptionId: userpreviusVoteOnPoll.pollOptionId,
+                votes: Number(votes),
+              });
+              
             } else if(userpreviusVoteOnPoll){
                 return reply.status(400).send({message: "You already vote on this poll."})
             }
@@ -76,7 +87,13 @@ export async function voteOnPoll(app: FastifyInstance) {
        })
 
        //created rank of votes for all pollOptions 
-       await redis.zincrby(pollId, 1, pollOptionId)
+       const votes = await redis.zincrby(pollId, 1, pollOptionId)
+
+       //published message when the user vote on an pull or change thier twoice
+       voting.publish(pollId, {
+            pollOptionId,
+            votes: Number(votes)
+       })
 
         return reply.status(201).send()
     })
